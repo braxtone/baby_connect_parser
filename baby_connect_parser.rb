@@ -45,6 +45,7 @@ class BabyConnectDataParser
       parsed_record = self.send("parse_#{activity}_record", row.to_hash) rescue nil
 
       acc[activity].push(parsed_record || row.to_hash)
+
       acc
     end
   end
@@ -96,8 +97,25 @@ class BabyConnectDataParser
     DateTime.parse(date).strftime('%F %T')
   end
 
-  def parse_nursing_text(text)
-    interesting_bits = text.match(/Hazel nursed \((.*)\)/).captures.first
+  def parse_nursing_record(record)
+    # Parse timestamps
+    record[:start_time] = format_date(record[:start_time])
+    record[:end_time] = format_date(record[:end_time])
+
+    # Parse the text of the record to get the duration per side in minutes
+    parsed_text = parse_nursing_text(record[:child_name], record[:text])
+    record[:left_side] = parsed_text[:left]
+    record[:right_side] = parsed_text[:right]
+
+    # Delete unused or derivative fields
+    record.delete(:duration)
+    record.delete(:extra_data)
+
+    record
+  end
+
+  def parse_nursing_text(child_name, text)
+    interesting_bits = text.match(/#{child_name} nursed \((.*)\)/).captures.first
 
     interesting_bits.split(',').reduce( Hash.new(0) ) do |acc, side| 
       duration, side = side.split(' ')
@@ -115,33 +133,88 @@ class BabyConnectDataParser
     end
   end
 
-  def parse_nursing_record(record)
+  def parse_diaper_record(record)
     # Parse timestamps
     record[:start_time] = format_date(record[:start_time])
     record[:end_time] = format_date(record[:end_time])
 
-    # Parse the text of the record to get the duration per side in minutes
-    parsed_text = parse_nursing_text(record[:text])
-    record[:left_side] = parsed_text[:left]
-    record[:right_side] = parsed_text[:right]
+    # Parse horrible horrible text, dare I say crappy
+    parsed_text = parse_diaper_text(record[:child_name], record[:text])
 
-    # Delete unused or derivative fields
-    record.delete(:duration)
-    record.delete(:extra_data)
+    record.merge! parsed_text
 
     record
   end
 
-  #def parse_diaper_record(record)
-  #  # Parse timestamps
-  #  record[:start_time] = format_date(record[:start_time])
-  #  record[:end_time] = format_date(record[:end_time])
 
-  #end
+  def parse_diaper_text(child_name, text)
+    # Everything about this is terrible, way to static
+    # need to find a way to make it more dynamic based on the data
+    # but the way the data is structured (attrib1, attrib2, attrib3)
+    # doesn't really lend itself to that
+    diaper_attributes = {
+      'normal' => 'consistency',
+      'diarrhea' => 'consistency',
+      'meconium' => 'consistency',
+      'hard' => 'consistency',
+      'little balls' => 'consistency',
+      'mucousy' => 'consistency',
+      'runny' => 'consistency',
+      'seedy' => 'consistency',
+      'soft' => 'consistency',
+      'watery' => 'consistency',
+      'claylike' => 'consistency',
+      'small' => 'quantity',
+      'medium' => 'quantity',
+      'large' => 'quantity',
+      'dark brown' => 'color',
+      'light brown' => 'color',
+      'mustard' => 'color',
+      'green' => 'color',
+      'red' => 'color',
+      'orange' => 'color',
+      'yellow' => 'color',
+      'white' => 'color',
+      'black' => 'color',
+      'leak' => 'leak',
+      'open air accident' => 'open air accident'
+    }
 
-  #def parse_diaper_text(text)
+    regex = /#{child_name} had a (.*) diaper \((.*)\)/
 
-  #end
+    type, attributes = text.match(regex).captures
+    attributes = attributes.split(',').map(&:strip)
+
+    leak = false
+    quantity = nil
+    consistency = nil
+    open_air_accident = false
+    color = nil
+
+    attributes.each do |attr|
+      case diaper_attributes[attr]
+      when 'leak'
+        leak = true
+      when 'quantity'
+        quantity = attr
+      when 'consistency'
+        consistency = attr
+      when 'open air accident'
+        open_air_accident = attr
+      when 'color'
+        color = attr
+      end
+    end
+
+    { 
+      color: color,
+      consistency: consistency,
+      leak: leak,
+      open_air_accident: open_air_accident,
+      quantity: quantity,
+      type: type
+    }
+  end
 end
 
 bc_data_filename = ARGV[0]
